@@ -31,13 +31,16 @@ from os import listdir
 import tensorflow as tf
 from tensorflow.keras import layers
 from tensorflow.keras.callbacks import LearningRateScheduler
+import json
 
 # # Константы
 
 # In[2]:
+with open("configs.json", "r") as file:
+    CONFIGS = json.load(file)
 
-PATH = "./"
-DESCR = "./ScansDescriptionWithPathCS.csv"
+PATH = CONFIGS['PATH']
+DESCR = CONFIGS['DESCR']
 COLUMNS = ["Номер", "Kiestra_ID", "Kiestra_BARCODE", "Kiestra_SCAN_NR", "Kiestra_CS_ID", "Kiestra_CS_DESCRIPTION", "SCAN_PATH", "Результат"]
 GROUPS = ["Unknown", "NoGrowth"]
 
@@ -154,7 +157,7 @@ def show_images(images, cols = 1, titles = None):
 
 D = 2000
 RIM = 300
-SIZE = 500
+SIZE = CONFIGS['SIZE']
 
 
 # Функция предобработки, сглаживание и эквализация гистограммы закоментированы, тут только ресайз и обрезка
@@ -191,15 +194,15 @@ def PREPROCESS(image):
 
 
 def read(patients, select=lambda x: x, silent=False):
-    IMAGES = []
+    #IMAGES = []
     filenames = []
     groups = []
     wrap = lambda x: x if silent else tqdm(x)
     # Пациенты
     for index in wrap(patients):
         try:
-            un_path = ("./Unknown")
-            ng_path = ("./NoGrowth")
+            un_path = CONFIGS['un_path']
+            ng_path = CONFIGS['ng_path']
             if index.replace(" ", "") in listdir(un_path) or index.replace(" ", "") in listdir(ng_path):
                 group = PATIENTS.get_group(index)
                 # Чашки
@@ -209,36 +212,38 @@ def read(patients, select=lambda x: x, silent=False):
                     # Профили
                     for profile, ptable in btable.groupby("Kiestra_CS_DESCRIPTION"):
                         # Пути
-                        if("chrom" not in profile.lower()) and ("custom" not in profile.lower()):
+                        if("chrom" not in profile.lower()) and ("custom" not in profile.lower()) and ("defa" not in profile.lower()):
                             one_person.append(np.unique(ptable["SCAN_PATH"]))
-                            for path in select(sorted(np.unique(ptable["SCAN_PATH"]))):
-                                #print(index, barcode, profile, path.split("_")[1])
-                                path = os.path.join(PATH, path)
-                                path = path.replace("\\", '/') 
-                                one_person_images.append(PREPROCESS(np.asarray(Image.open(path))))
-                                filenames.append(path)
+                            #for path in select(sorted(np.unique(ptable["SCAN_PATH"]))):
+                            #    #print(index, barcode, profile, path.split("_")[1])
+                            #    path = os.path.join(PATH, path)
+                            #    path = path.replace("\\", '/') 
+                            #    one_person_images.append(PREPROCESS(np.asarray(Image.open(path))))
+                            #    filenames.append(path)
                 groups.append(one_person)
-                IMAGES.append(one_person_images)
+                #IMAGES.append(one_person_images)
         except:
             continue
-    return filenames, IMAGES, groups
+    return filenames, groups
 
 
 # # Cписок пар изображений для каждого эксперимента
 
 
 def pictures_num_to_differ(table):
+    all_numbers = []
     numbers = []
-    for person in table:
+    for index, person in zip(range(len(table)),table):
         one_person_numbers = []
         count = -1
         for groups in person:
             count+=1
             for i in range(len(groups)-1):
                 one_person_numbers.append((count,count+1))
+                all_numbers.append([index,(count,count+1)])
                 count+=1
         numbers.append(np.array(one_person_numbers))
-    return numbers
+    return numbers, all_numbers
 
 
 # # Список вычетов одного изображения из другого (работает пока медленно)
@@ -255,7 +260,16 @@ def image_subtraction(images, numbers):
         subtractions.append(person_subtractions)
         all_subs.extend(person_subtractions)
     return subtractions, all_subs
-
+def get_images(k, all_numbers,all_numbers_ng,all_numbers_un,images_un,images_ng):
+    un_path = listdir("images_un_blood_200_newest")
+    ng_path = listdir("images_ng_blood_200_newest")
+    if k > len(all_numbers_un):
+        res = images_ng[all_numbers[k][0]]
+    else:
+        res = images_un[all_numbers[k][0]]
+    return [res[all_numbers[k][1][0]],res[all_numbers[k][1][1]]]
+def getlen_num(numbers):
+    return numbers[len(numbers)-1][1]+1
 #Пайплайн
 
 # # Считываем описание
@@ -288,17 +302,21 @@ no_growth_train, no_growth_test = select(patients[~patients["RESULT"]].index, AL
 print(len(unknown_train), len(unknown_test), TRAIN, ALL_UNKNOWN)
 print(len(no_growth_train), len(no_growth_test), TRAIN, ALL_NOGROWTH)
 
+#print(CONFIGS['un_path'])
+#print(CONFIGS['ng_path'])
+print(len(no_growth_train))
+print(len(unknown_train))
 #Получение изображений
-_,images_ng, table_ng = read(no_growth_train, silent=False)
+_,table_ng = read(no_growth_train, silent=False)
 #print(len(images_ng))
-for index, i in zip(range(len(images_ng)), images_ng):
-    np.save("images_ng_blood_500_new/"+str(index), i)
+#for index, i in zip(range(len(images_ng)), images_ng):
+#    np.save("images_ng_blood_200_new/"+str(index), i)
 #images_ng = np.load("images_ng.npy", allow_pickle=True)
 #np.save("table_ng", table_ng)
-_, images_un, table_un = read(unknown_train, silent=False)
+_, table_un = read(unknown_train, silent=False)
 #images_un = np.load("images_un.npy", allow_pickle=True)
-for index, i in zip(range(len(images_un)), images_un):
-    np.save("images_un_blood_500_new/"+str(index), i)
+#for index, i in zip(range(len(images_un)), images_un):
+#    np.save("images_un_blood_200_new/"+str(index), i)
 #print(len(table_ng))
 #print(len(table_un))
 #def getlen(table):
@@ -309,49 +327,98 @@ for index, i in zip(range(len(images_un)), images_un):
 #t = np.load("lol", allow_pickle=True)
 #np.save("table_ng", table_un)
 #Составление пар
+print(len(table_ng))
+print(len(table_un))
 del table_ng[234]
 del table_un[291]
 del table_un[288]
 del table_un[131]
-numbers_ng = pictures_num_to_differ(table_ng)
-numbers_un = pictures_num_to_differ(table_un)
+numbers_ng, all_numbers_ng = pictures_num_to_differ(table_ng)
+numbers_un, all_numbers_un = pictures_num_to_differ(table_un)
 
+numbers_ng_new = []
+for i in range(len(numbers_ng)):
+    if(len(numbers_ng[i]) != 0):
+        numbers_ng_new.append(numbers_ng[i])
+    else:
+        print(1)
+numbers_ng = numbers_ng_new
+numbers_un_new = []
+for i in range(len(numbers_un)):
+    if(len(numbers_un[i]) != 0):
+        numbers_un_new.append(numbers_un[i])
+    else:
+        print(2)
+numbers_un = numbers_un_new 
+all_numbers =[]
+for i in all_numbers_un:
+    all_numbers.append(i)
+for i in all_numbers_ng:
+    all_numbers.append(i)   
 #print(len(table_ng))
 #print(len(table_un))
-#images_ng = []
-#for i in tqdm(range(264)):
-#    images_ng.append(np.load("images_ng_blood_200_new/"+str(i)+".npy"))
-#    print(getlen(table_ng[i]), len(images_ng[i]))
+images_ng = []
+for i in tqdm(range(263)):
+    images_ng.append(np.load("images_ng_blood_200_newest/"+str(i)+".npy"))
+    #print(getlen(table_ng[i]), len(images_ng[i]))
     
-#images_un = []
-#for i in tqdm(range(453)):
-#    images_un.append(np.load("images_un_blood_200_new/"+str(i)+".npy"))
-#    print(len(table_un[i]), len(table_un[i]))
+images_un = []
+for i in tqdm(range(442)):
+    images_un.append(np.load("images_un_blood_200_newest/"+str(i)+".npy"))
+    #print(len(table_un[i]), len(table_un[i]))
 
+
+images_ng_new = []
+for i in range(len(images_ng)):
+    if(len(images_ng[i]) != 0):
+        images_ng_new.append(images_ng[i])
+    else:
+        print(1)
+images_ng = images_ng_new
+images_un_new = []
+for i in range(len(images_un)):
+    if(len(images_un[i]) != 0):
+        images_un_new.append(images_un[i])
+    else:
+        print(2)
+images_un = images_un_new 
+
+
+for i in range(len(images_un)):
+    print(len(images_un[i]), getlen_num(numbers_un[i]))
+for i in range(len(images_ng)):
+    print(len(images_ng[i]), getlen_num(numbers_ng[i]))
+
+
+#for index, i in zip(range(len(images_ng)), images_ng):
+#    np.save("images_ng_blood_200_newest/"+str(index), i)
+#for index, i in zip(range(len(images_un)), images_un):
+#    np.save("images_un_blood_200_newest/"+str(index), i)
 #Вычитание пар
 per_subs_ng, all_subs_ng = image_subtraction(images_ng, numbers_ng)
 per_subs_un, all_subs_un = image_subtraction(images_un, numbers_un)
 #all_subs_ng = np.load("all_subs_ng_500.npy", allow_pickle=True)
 
-np.save("all_subs_ng_blood_500_new", all_subs_ng)
-np.save("all_subs_un_blood_500_new", all_subs_un)
+np.save("all_subs_ng_blood_200_new", all_subs_ng)
+np.save("all_subs_un_blood_200_new", all_subs_un)
 #np.load("lol")
-#all_subs_ng = np.load("all_subs_ng_blood_200_new.npy", allow_pickle=True)
-#all_subs_un = np.load("all_subs_un_blood_200_new.npy", allow_pickle=True)
+#all_subs_ng = np.load(CONFIGS['all_subs_ng'], allow_pickle=True)
+#all_subs_un = np.load(CONFIGS['all_subs_un'], allow_pickle=True)
+
 #print(len(all_subs_ng))
 #print(len(all_subs_un))
 
 #
-print(len(all_subs_un))
-all_subs_un_means = []
-for i in all_subs_un:
-    all_subs_un_means.append(i.mean())
-all_subs_un = np.array(all_subs_un)    
-all_subs_un_means = np.array(all_subs_un_means)    
-all_subs_un = all_subs_un[all_subs_un_means>0.05]
+#print(len(all_subs_un))
+#all_subs_un_means = []
+#for i in all_subs_un:
+#    all_subs_un_means.append(i.mean())
+#all_subs_un = np.array(all_subs_un)    
+#all_subs_un_means = np.array(all_subs_un_means)    
+#all_subs_un = all_subs_un[all_subs_un_means>0.05]
 print(len(all_subs_un))
 all_subs_len = len(all_subs_un)+len(all_subs_ng)
-FREQ = [len(all_subs_un)/all_subs_len,len(all_subs_ng)/all_subs_len]
+#FREQ = [len(all_subs_un)/all_subs_len,len(all_subs_ng)/all_subs_len]
 class_weight = {0:len(all_subs_ng)/all_subs_len,
                 1:len(all_subs_un)/all_subs_len}
 from skimage.transform import rotate
@@ -360,36 +427,37 @@ from sklearn.utils import shuffle
 
 
 X_data = []
+k = 0
 for i in tqdm(all_subs_un):
-    X_data.append(i)
+    X_data.append([i,k])
+    k+=1
 for i in tqdm(all_subs_ng):
-    X_data.append(i)
-X_data = np.array(X_data)
+    X_data.append([i,k])
+    k+=1
 y = [0]*len(all_subs_un) + [1]*len(all_subs_ng)
+X_data = np.array(X_data)
 X_data, y = shuffle(X_data,y)
 
 from sklearn.model_selection import train_test_split
 X_train, X_val, y_train, y_val = train_test_split(X_data, y, test_size=0.2, random_state=42)
+print(X_train[0])
 #np.save("y_val_200_pr_ag6_XCEPTION_newloss",  y_val)
 #np.load("lol")    
 X_train_true = []
-for i in tqdm(X_train):
+for i in tqdm(X_train[:,0]):
     X_train_true.append(i)
-    a = randint(1, 359)
-    X_train_true.append(rotate(i,a,preserve_range = True).astype('uint8'))
-    a = randint(1, 359)
-    X_train_true.append(rotate(i,a,preserve_range = True).astype('uint8'))
-    a = randint(1, 359)
-    X_train_true.append(rotate(i,a,preserve_range = True).astype('uint8'))
-y_train = np.repeat(y_train,4)
+    for j in range(CONFIGS['augmentation']):
+        a = randint(1, 359)
+        X_train_true.append(rotate(i,a,preserve_range = True).astype('uint8'))
+y_train = np.repeat(y_train,CONFIGS['augmentation']+1)
 #X = []
 #for i in tqdm(range(len(X_data))):
 #    X.append(PREPROCESS(X_data[i]))
 X_train_true, y_train = shuffle(X_train_true,y_train)
 X_train = np.array(X_train_true)
-np.save("X_train_200_XCEPTION", X_train)
-np.save("y_train_200_XCEPTION",  y_train)
-np.save("X_val_200_XCEPTION", X_val)
+#np.save("X_train_200_XCEPTION", X_train)
+#np.save("y_train_200_XCEPTION",  y_train)
+#np.save("X_val_200_XCEPTION", X_val)
 np.save("y_val_200_XCEPTION",  y_val)    
 #X_train = np.array(X_train)
 #X_data = np.array(X_data)
@@ -408,11 +476,17 @@ np.save("y_val_200_XCEPTION",  y_val)
 #    X_val_gs.append(rgb2gray(i))
 #X_train = np.reshape(X_train_gs, (len(X_train_gs), 200, 200, 1))
 #X_val = np.reshape(X_val_gs, (len(X_val_gs), 200, 200, 1))
+X_val_true = []
+for i in tqdm(X_val[:,0]):
+    X_val_true.append(i)
+X_val_true = np.array(X_val_true)
 
 print(X_train.shape)
 print(len(y_train))
-print(X_val.shape)
+print(X_val_true.shape)
 print(len(y_val))
+
+
 #from tensorflow.keras import regularizers
 
 #from keras import layers
@@ -449,10 +523,10 @@ def mywloss(y_true,y_pred):
 
 base_model = tf.keras.applications.Xception(
     weights='imagenet', 
-    input_shape=(500, 500, 3),
+    input_shape=(SIZE, SIZE, 3),
     include_top=False)
 
-inputs = tf.keras.Input(shape=(500, 500, 3))
+inputs = tf.keras.Input(shape=(SIZE, SIZE, 3))
 x = base_model(inputs)
 x = layers.GlobalAveragePooling2D()(x)
 x = layers.Flatten()(x)
@@ -465,7 +539,7 @@ model_pretrained = tf.keras.Model(inputs, outputs)
 
 model_pretrained.compile(loss = 'binary_crossentropy',
               optimizer='adam',
-              metrics=['accuracy'])
+              metrics=['accuracy',tf.keras.metrics.Precision(),tf.keras.metrics.Recall()])
 print(model_pretrained.summary())
 
 
@@ -520,10 +594,10 @@ model.compile(loss = 'binary_crossentropy',
 print(model.summary())
 model_pretrained.fit(
         X_train, y_train,
-        epochs=35,
+        epochs=CONFIGS['epochs'],
         batch_size = 32,
         verbose = 2,
-        validation_data = (X_val,y_val),
+        validation_data = (X_val_true,y_val),
         class_weight=class_weight,
         callbacks = [learning_rate_reduction])
 #model.fit(
@@ -535,13 +609,18 @@ model_pretrained.fit(
 #        callbacks = [learning_rate_reduction])
 from sklearn.metrics import accuracy_score
 #y_pred = np.round(model.predict(X_val))
-y_pred = np.round(model_pretrained.predict(X_val))
+y_pred = np.round(model_pretrained.predict(X_val_true))
 X_err = []
-for y_v, y_p, x in zip(y_val, y_pred, X_val):
+y_res_pred = []
+original_img = []
+for y_v, y_p, x,k in zip(y_val, y_pred, X_val[:,0],X_val[:,1]):
     if(y_v != y_p):
         X_err.append(x)
-np.save("X_err_200_XCEPTION", X_err)
-np.save("y_pred_200_XCEPTION", y_pred)
+        y_res_pred.append(y_p)
+        original_img.append(get_images(k, all_numbers,all_numbers_ng,all_numbers_un,images_un,images_ng))
+np.save(CONFIGS['X_err'], X_err)
+np.save(CONFIGS['y_pred'], y_res_pred)
+np.save(CONFIGS['original_img'], original_img)
 print(accuracy_score(y_pred, y_val))
 #print(accuracy_score(np.round(model.predict(X_val)), y_val))
 #model.fit(
