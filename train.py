@@ -32,6 +32,7 @@ from os import listdir
 import tensorflow as tf
 from tensorflow.keras import layers
 from tensorflow.keras.callbacks import LearningRateScheduler
+from tensorflow.keras import backend as K
 import json
 from glob import glob
 from sklearn.metrics import accuracy_score, precision_score, recall_score
@@ -60,43 +61,33 @@ SIZE = CONFIGS['SIZE']
 
 #Пайплайн
 
-print("DECEMBER")
-blood_nogrowth = np.load('/dgx_home/wizard/Naletov/newstep/img_arr/dec_chr_nogrowth_.npy')
-blood_unknown = np.load('/dgx_home/wizard/Naletov/newstep/img_arr/dec_chr_unknown_.npy')
-blood_nogrowth_y = [1]*len(blood_nogrowth)
-blood_unknown_y = [0]*len(blood_unknown)
-X_blood = np.concatenate([blood_nogrowth,blood_unknown])
-y_blood = blood_nogrowth_y + blood_unknown_y
+
+blood_nogrowth = np.load('/dgx_home/wizard/Naletov/newstep/img_arr/jul_chr_nogrowth_.npy')
+blood_unknown = np.load('/dgx_home/wizard/Naletov/newstep/img_arr/jul_chr_unknown_.npy')
+blood_nogrowth_y = [0]*len(blood_nogrowth)
+blood_unknown_y = [1]*len(blood_unknown)
+X_test = np.concatenate([blood_nogrowth,blood_unknown])
+y_test = blood_nogrowth_y + blood_unknown_y
 del blood_nogrowth
 del blood_unknown
-X_blood = np.array(X_blood)
-y_blood = np.array(y_blood)
-X_blood, y_blood = shuffle(X_blood, y_blood)
-
-
-
-model_pretrained = tf.keras.models.load_model(CONFIGS['model'])
-y_pred = model_pretrained.predict(X_blood)
-print(accuracy_score(y_blood, np.round(y_pred)))
-print(precision_score(y_blood, np.round(y_pred)))
-print(recall_score(y_blood, np.round(y_pred)))
-del X_blood
-del y_blood
-"""
+X_test = np.array(X_test)
+y_test = np.array(y_test)
+X_test, y_test = shuffle(X_test, y_test)
+          
 files = glob('/dgx_home/wizard/Naletov/newstep/img_arr/*')
-mas = ['oct','nov','jun','jul','aug']
+mas = ['dec']
 for j in tqdm(mas):
     print(f"{j}")
     for i in files:
         if j in i:
             splited = i.split("_")
             #print(splited)
-            if splited[-2] == 'nogrowth' and splited[-3] == 'blood' and 'pre' not in splited[-1]:
+            if splited[-2] == 'nogrowth' and splited[-3] == 'chr' and 'pre' not in splited[-1]:
                 blood_nogrowth = np.load(i)
-            if splited[-2] == 'unknown' and splited[-3] == 'blood' and 'pre' not in splited[-1]:
+            if splited[-2] == 'unknown' and splited[-3] == 'chr' and 'pre' not in splited[-1]:
                 blood_unknown = np.load(i)  
-    blood_nogrowth_y = [1]*len(blood_nogrowth)
-    blood_unknown_y = [0]*len(blood_unknown)
+    blood_nogrowth_y = [0]*len(blood_nogrowth)
+    blood_unknown_y = [1]*len(blood_unknown)
 
     X_blood = np.concatenate([blood_nogrowth,blood_unknown])
     #X_blood = blood_unknown
@@ -106,37 +97,78 @@ for j in tqdm(mas):
     X_blood = np.array(X_blood)
     y_blood = np.array(y_blood)
     X_blood, y_blood = shuffle(X_blood, y_blood)
-    
-    
+
+def mywloss1(y_true,y_pred):
+    yc=tf.clip_by_value(y_pred,K.epsilon(),1-K.epsilon())
+    loss = -(tf.reduce_mean(tf.reduce_mean(y_true*tf.math.log(yc)*1 + (1 - y_true)*tf.math.log(1-yc), axis=0)))#+(yc-0.5)*0.01)
+    #loss = K.max(y_pred,0)-y_pred * y_true + K.log(1+K.exp((-1)*K.abs(y_pred)))
+    return loss
+def mywloss2(y_true,y_pred):
+    yc=tf.clip_by_value(y_pred,K.epsilon(),1-K.epsilon())
+    loss = -(tf.reduce_mean(tf.reduce_mean(y_true*tf.math.log(yc)*500 + (1 - y_true)*tf.math.log(1-yc), axis=0)))#+(yc-0.5)*0.01)
+    #loss = K.max(y_pred,0)-y_pred * y_true + K.log(1+K.exp((-1)*K.abs(y_pred)))
+    return loss
+def mywloss3(y_true,y_pred):
+    yc=tf.clip_by_value(y_pred,K.epsilon(),1-K.epsilon())
+    loss = -(tf.reduce_mean(tf.reduce_mean(y_true*tf.math.log(yc)*1000 + (1 - y_true)*tf.math.log(1-yc), axis=0)))#+(yc-0.5)*0.01)
+    #loss = K.max(y_pred,0)-y_pred * y_true + K.log(1+K.exp((-1)*K.abs(y_pred)))
+    return loss
+def mywloss4(y_true,y_pred):
+    yc=tf.clip_by_value(y_pred,K.epsilon(),1-K.epsilon())
+    loss = -(tf.reduce_mean(tf.reduce_mean(y_true*tf.math.log(yc)*5000 + (1 - y_true)*tf.math.log(1-yc), axis=0)))#+(yc-0.5)*0.01)
+    #loss = K.max(y_pred,0)-y_pred * y_true + K.log(1+K.exp((-1)*K.abs(y_pred)))
+    return loss
+ 
+
+
+for loss_custom in [mywloss1,mywloss2,mywloss3,mywloss4]:#np.arange(1.5, 3.0, 0.5):
+    learning_rate_reduction = LearningRateScheduler(lambda x: 1e-4 * 0.9 ** x)
+    base_model = tf.keras.applications.Xception(
+        weights='imagenet', 
+        input_shape=(SIZE, SIZE, 3),
+        include_top=False)
+
+    inputs = tf.keras.Input(shape=(SIZE, SIZE, 3))
+    x = base_model(inputs)
+    x = layers.GlobalAveragePooling2D()(x)
+    x = layers.Flatten()(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.Dense(1024, activation='relu', kernel_initializer='he_uniform')(x)
+    x = layers.Dropout(0.6)(x)
+    #x = layers.Dense(256, activation='relu', kernel_initializer='he_uniform')(x)
+    #x = layers.Dropout(0.7)(x)
+    outputs = layers.Dense(1, activation='sigmoid')(x)
+    model_pretrained = tf.keras.Model(inputs, outputs)
+
+    model_pretrained.compile(loss = loss_custom,#'binary_crossentropy',#mywloss
+              optimizer='adam',
+              metrics=['accuracy',tf.keras.metrics.Precision(),tf.keras.metrics.Recall()])
+              
     model_pretrained.fit(
         X_blood, y_blood,
+        validation_data = (X_test, y_test),
         epochs=CONFIGS['epochs'],
         batch_size = 32,
-        verbose = 2)
-    del X_blood
-    del y_blood
-    
-model_pretrained.save(CONFIGS['new_model'])
-"""
-"""
-    y_pred = np.round(model_pretrained.predict(X_blood))
+        verbose = 2,
+        callbacks = [learning_rate_reduction])
+      
+    y_pred = model_pretrained.predict(X_test)
+    """ 
+    y_pred_round = np.round(y_pred)
     X_err = []
     y_res_pred = []
-    for y_v, y_p, x in zip(y_blood, y_pred, X_blood):
+    for y_v, y_p, x in zip(y_test, y_pred_round, X_test):
         if(y_v != y_p):
             X_err.append(x)
             y_res_pred.append(y_p)
-    np.save(CONFIGS['X_err']+f"_{j}", X_err)
-    np.save(CONFIGS['y_pred']+f"_{j}", y_res_pred)
-    print(accuracy_score(y_blood, y_pred))
-    print(precision_score(y_blood, y_pred))
-    print(recall_score(y_blood, y_pred))
-    del X_blood
-    del y_pred
-    del y_blood
-"""
-
-
+    np.save(CONFIGS['X_err'], X_err)
+    np.save(CONFIGS['y_err'], y_res_pred)
+    np.save(CONFIGS['y_pred'], y_pred)
+    np.save(CONFIGS['y_true'], y_test)
+    """
+    print(accuracy_score(y_test, np.round(y_pred)))
+    print(precision_score(y_test, np.round(y_pred)))
+    print(recall_score(y_test, np.round(y_pred)))
 """
 files = glob('/dgx_home/wizard/Naletov/newstep/img_arr/*')
 for i in tqdm(files):
@@ -156,20 +188,10 @@ for i in tqdm(files):
         flag4 = False
         blood_unknown = np.load(i)
 """
-
+"""
 #Predict
 print("DECEMBER")
-blood_nogrowth = np.load('/dgx_home/wizard/Naletov/newstep/img_arr/dec_chr_nogrowth_.npy')
-blood_unknown = np.load('/dgx_home/wizard/Naletov/newstep/img_arr/dec_chr_unknown_.npy')
-blood_nogrowth_y = [1]*len(blood_nogrowth)
-blood_unknown_y = [0]*len(blood_unknown)
-X_blood = np.concatenate([blood_nogrowth,blood_unknown])
-y_blood = blood_nogrowth_y + blood_unknown_y
-del blood_nogrowth
-del blood_unknown
-X_blood = np.array(X_blood)
-y_blood = np.array(y_blood)
-X_blood, y_blood = shuffle(X_blood, y_blood)
+
 model_pretrained = tf.keras.models.load_model(CONFIGS['new_model'])
 y_pred = model_pretrained.predict(X_blood)
 y_pred_round = np.round(y_pred)
@@ -188,7 +210,7 @@ for y_v, y_p, x in zip(y_blood, y_pred_round, X_blood):
 print(accuracy_score(y_blood, np.round(y_pred)))
 print(precision_score(y_blood, np.round(y_pred)))
 print(recall_score(y_blood, np.round(y_pred)))
-
+"""
 """       
 blood_nogrowth = np.load('/dgx_home/wizard/Naletov/newstep/img_arr/sep_chr_nogrowth_.npy')
 #blood_nogrowth = np.append(blood_nogrowth, np.load('/dgx_home/wizard/Naletov/newstep/img_arr/jul_blood_nogrowth_.npy'))        
