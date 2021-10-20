@@ -16,7 +16,6 @@ from ranger21 import Ranger21
 from torch.nn.parallel import DistributedDataParallel as DDP
 from loss import FocalLoss, LabelSmoothingLoss, LabelSmoothingCrossEntropy
 
-
 class Trainer:
     def __init__(self, logs_dir, config_name, gpu):
         self.gpu = gpu
@@ -66,9 +65,15 @@ class Trainer:
         if self.gpu == 0:
             with open(os.path.join(self.logs_dir, 'seed_state.json'), 'w+') as output_file:
                 json.dump(seed_state, output_file)
-
+            
     def _init_model(self):
         output_sizes = []
+        for domain in self.data_holder.domains:
+            size = domain['length']
+            if size == 2:
+                size = 1
+            output_sizes.append(size)
+
         model_name = self.model_config['name']
         self.model = models.MODELS[model_name](config=self.model_config)
 
@@ -102,9 +107,21 @@ class Trainer:
         self.scaler = torch.cuda.amp.GradScaler()
 
     def _init_loss(self):
-        self.losses = [FocalLoss]#
-        loss_kwargs = [{'weight': self.data_holder.weights[0][1]}]
-        self.losses = [loss(**kwargs).cuda() for loss, kwargs in zip(self.losses, loss_kwargs)] #**kwargs
+        """self.losses = [nn.BCEWithLogitsLoss if domain['length'] == 2 else nn.CrossEntropyLoss
+                       for domain in self.data_holder.domains]
+        loss_kwargs = [
+            {'ignore_index': -1, 'weight': weights} if domain['length'] != 2 else {'pos_weight': weights[1]}
+            for domain, weights in zip(self.data_holder.domains, self.data_holder.weights)
+        ]
+        self.losses = [loss(reduction='none', **kwargs).cuda() for loss, kwargs in zip(self.losses, loss_kwargs)]"""
+
+        self.losses = [FocalLoss if domain['length'] == 2 else nn.CrossEntropyLoss#LabelSmoothingCrossEntropy#LabelSmoothingLoss
+                       for domain in self.data_holder.domains]
+        loss_kwargs = [
+            {'weight': weights} if domain['length'] != 2 else {'weight': weights[1]/weights[0]}
+            for domain, weights in zip(self.data_holder.domains, self.data_holder.weights)
+        ]
+        self.losses = [loss(**kwargs).cuda() for loss, kwargs in zip(self.losses, loss_kwargs)]
 
     def _init_loaders(self):
         if self.gpu == 0:
@@ -134,7 +151,6 @@ class Trainer:
             prefetch_factor=self.params['prefetch_factor']
         )
         self.test_iters = len(self.test_loader)
-
     def _init_experiment(self):
         self.experiment = Experiment(self.data_holder.domains, self.experiment_config, self.logs_dir)
 
@@ -156,8 +172,8 @@ class Trainer:
             self.optimizer.zero_grad()
             with torch.cuda.amp.autocast():
                 prediction = self.model(images)
-                #print(prediction.squeeze(dim=1))
-                #print(labels.unsqueeze(dim=1).float())
+                # print(prediction.squeeze(dim=1))
+                # print(labels.unsqueeze(dim=1).float())
                 losses = self.losses[0](prediction, labels.unsqueeze(dim=1).float())
             loss = torch.mean(sum(losses))
             self.scaler.scale(loss).backward()
